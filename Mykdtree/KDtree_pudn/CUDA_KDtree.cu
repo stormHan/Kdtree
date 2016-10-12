@@ -177,6 +177,19 @@ __device__ void Search(const CUDA_KDNode *nodes, const int *indexes, const Point
     *ret_dist = best_dist;
 }
 
+__device__ void Search_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, const Point &query, int *ret_index, float *ret_dist, int k)
+{
+	// Find the first closest node, this will be the upper bound for the next searches
+	int best_node = 0;
+	int* k_idx;
+	float* k_dist;
+	float radius = 0;
+
+	SearchAtNode(nodes, indexes, pts, 0 /* root */, query, &best_idx, &best_dist, &best_node);
+
+
+}
+
 __global__ void SearchBatch(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, int num_pts, Point *queries, int num_queries, int *ret_index, float *ret_dist)
 {
     int idx = blockIdx.x*blockDim.x + threadIdx.x;
@@ -185,6 +198,17 @@ __global__ void SearchBatch(const CUDA_KDNode *nodes, const int *indexes, const 
         return;
 
     Search(nodes, indexes, pts, queries[idx], &ret_index[idx], &ret_dist[idx]);
+}
+
+
+__global__ void SearchBatch_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, int num_pts, Point *queries, int num_queries, int *ret_index, float *ret_dist, int k)
+{
+	int idx = blockIdx.x*blockDim.x + threadIdx.x;
+
+	if (idx >= num_queries)
+		return;
+
+	Search_knn(nodes, indexes, pts, queries[idx], &ret_index[idx * k], &ret_dist[idx * k], k);
 }
 
 CUDA_KDTree::~CUDA_KDTree()
@@ -270,7 +294,7 @@ void CUDA_KDTree::Search(const vector <Point> &queries, vector <int> &indexes, v
     indexes.resize(queries.size());
     dists.resize(queries.size());
 
-    cudaMalloc((void**)&gpu_queries, sizeof(Point)*queries.size()*KDTREE_DIM);
+    cudaMalloc((void**)&gpu_queries, sizeof(float)*queries.size()*KDTREE_DIM);
     cudaMalloc((void**)&gpu_ret_indexes, sizeof(int)*queries.size()*KDTREE_DIM);
     cudaMalloc((void**)&gpu_ret_dist, sizeof(float)*queries.size()*KDTREE_DIM);
 
@@ -293,4 +317,43 @@ void CUDA_KDTree::Search(const vector <Point> &queries, vector <int> &indexes, v
     cudaFree(gpu_queries);
     cudaFree(gpu_ret_indexes);
     cudaFree(gpu_ret_dist);
+}
+
+void CUDA_KDTree::Search_knn(const vector<Point> &queries, vector<int> &indexes, vector<float> &dists, int k)
+{
+	int threads = 512;
+	int blocks = queries.size() / threads + ((queries.size() % threads) ? 1 : 0);
+
+	Point *gpu_queries;
+	int *gpu_ret_indexes;
+	float *gpu_ret_dist;
+
+	indexes.resize(queries.size() * k);
+	dists.resize(queries.size() * k);
+
+	cudaMalloc((void**)&gpu_queries, sizeof(float) * queries.size() * KDTREE_DIM);
+	cudaMalloc((void**)&gpu_ret_indexes, sizeof(int) * k * queries.size());
+	cudaMalloc((void**)&gpu_ret_dist, sizeof(float) * k * queries.size());
+	CheckCUDAError("Initialize the gpu pointer");
+	
+	//copy the query data
+	cudaMemcpy(gpu_queries, &queries[0], sizeof(float) * queries.size() * KDTREE_DIM, cudaMemcpyHostToDevice);
+	CheckCUDAError("Copy the data");
+
+	printf("Cuda blocks / threads : %d %d", blocks, threads);
+
+	SearchBatch_knn << < blocks, threads >> >(m_gpu_nodes, m_gpu_indexes, m_gpu_points, m_num_points, gpu_queries, queries.size(), gpu_ret_indexes, gpu_ret_dist£¬ k);
+	cudaThreadSynchronize();
+
+	CheckCUDAError("kernel function");
+
+	//Copy back the data from GPU
+	cudaMemcpy(&indexes[0], gpu_ret_indexes, sizeof(int) * queries.size() * k, cudaMemcpyDeviceToHost);
+	cudaMemcpy(&dists[0], gpu_ret_dist, sizeof(float) * k * queries.size(), cudaMemcpyDeviceToHost);
+	CheckCUDAError("Copy back the data from GPU");
+
+	cudaFree(gpu_queries);
+	cudaFree(gpu_ret_dist);
+	cudaFree(m_gpu_indexes);
+
 }

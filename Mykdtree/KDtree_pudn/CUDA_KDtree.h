@@ -22,6 +22,11 @@ public:
     void CreateKDTree(KDNode *root, int num_nodes, const vector <Point> &data);
     void Search(const vector <Point> &queries, vector <int> &indexes, vector <float> &dists);
 
+	/*
+		the result vector indexex and dists is depend on the number of the queries and k
+		the size of indexes and dists is n * k
+	*/
+	void Search_knn(const vector<Point> &queries, vector<int> &indexes, vector<float> &dists, int k);
 private:
     CUDA_KDNode *m_gpu_nodes;
     int *m_gpu_indexes;
