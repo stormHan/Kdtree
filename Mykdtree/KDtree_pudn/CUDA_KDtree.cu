@@ -177,17 +177,103 @@ __device__ void Search(const CUDA_KDNode *nodes, const int *indexes, const Point
     *ret_dist = best_dist;
 }
 
+
+__device__ void SearchAtNode_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, int cur, const Point &query, int *ret_index, float *ret_dist, int *ret_node, int k)
+{
+	int neighbor_nb = 0;
+
+	//travasel to the nodes
+	while (true)
+	{
+		int split_axis = nodes[cur].level % KDTREE_DIM;
+
+		if (nodes[cur].left == -1){
+			//Get to the leaf node
+			*ret_node = cur;
+
+			neighbor_nb += nodes[cur].num_indexes;
+			while (neighbor_nb < k)
+			{
+				cur = nodes[cur].parent;
+				neighbor_nb += nodes[cur].num_indexes;
+			}
+
+			//Now we get enough neighbors in cur node
+			int *temp_index = (int*)malloc(sizeof(int) * nodes[cur].num_indexes);
+			float *temp_dists = (float*)malloc(sizeof(float) * nodes[cur].num_indexes);
+
+			for (int i = 0; i < nodes[cur].num_indexes; ++i)
+			{
+				temp_index[i] = indexes[nodes[cur].indexes + i];
+				temp_dists[i] = Distance(query, pts[temp_index[i]]);
+			}
+
+			int n = nodes[cur].num_indexes;
+			//利用k次冒泡得到前小的距离
+			int best_idx = 0;
+			float best_dist = FLT_MAX;
+			for (int i = 0; i < k; ++i)
+			{
+				for (int j = i; j < n; ++j)
+				{
+					if (temp_dists[j] < best_dist)
+					{
+						best_dist = temp_dists[j];
+						best_idx = temp_index[j];
+
+						temp_dists[j] = temp_dists[i];
+						temp_index[j] = temp_index[i];
+
+						temp_index[i] = best_idx;
+						temp_dists[i] = best_dist;
+					}
+				}
+
+				ret_index[i] = best_idx;
+				ret_dist[i] = best_dist;
+
+				best_idx = 0;
+				best_dist = FLT_MAX;
+			}
+		}
+		else if (query.coords[split_axis] < nodes[cur].split_value){
+			cur = nodes[cur].left;
+		}
+		else{
+			cur = nodes[cur].right;
+		}
+	}
+	
+}
+
+__device__ void SearchAtiNodeRange_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, const Point &query, int cur, float range, int *ret_index, float *ret_dist, int k)
+{
+
+}
+
 __device__ void Search_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, const Point &query, int *ret_index, float *ret_dist, int k)
 {
 	// Find the first closest node, this will be the upper bound for the next searches
 	int best_node = 0;
-	int* k_idx;
-	float* k_dist;
+	int* k_idx = (int*)malloc(sizeof(int) * k);
+	float* k_dist = (float*)malloc(sizeof(float) * k);
 	float radius = 0;
+	
+	SearchAtNode_knn(nodes, indexes, pts, 0 /* root */, query, k_idx, k_dist, &best_node, k);
 
-	SearchAtNode(nodes, indexes, pts, 0 /* root */, query, &best_idx, &best_dist, &best_node);
+	radius = sqrt(k_dist[k]);
 
+	//Now find other posiible candidates
+	int cur = best_node;
 
+	while (nodes[cur].parent != -1)
+	{
+		int parent = nodes[cur].parent;
+		int split_value = nodes[cur].level % KDTREE_DIM;
+	}
+
+	free(k_idx);
+	free(k_dist);
 }
 
 __global__ void SearchBatch(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, int num_pts, Point *queries, int num_queries, int *ret_index, float *ret_dist)
