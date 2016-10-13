@@ -24,6 +24,7 @@ public:
         _parent = -1;
         _left = -1;
         _right = -1;
+		points_nb = -1;
     }
 
     int id; // for GPU
@@ -32,6 +33,8 @@ public:
     int _parent, _left, _right; // for GPU
     float split_value;
     vector <int> indexes; // index to points
+
+	int points_nb;
 };
 
 class KDtree
