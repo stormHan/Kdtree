@@ -46,6 +46,7 @@ public:
     void Search(const Point &query, int *ret_index, float *ret_sq_dist);
     int GetNumNodes() const { return m_id; }
     KDNode* GetRoot() const { return m_root; }
+	int GetLevel() const{ return m_levels; }
 
     static bool SortPoints(const int a, const int b);
 
