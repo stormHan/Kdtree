@@ -182,6 +182,7 @@ __device__ void SearchAtNode_knn(const CUDA_KDNode *nodes, const int *indexes, c
 {
 	int neighbor_nb = 0;
 
+
 	//travasel to the nodes
 	while (true)
 	{
@@ -195,7 +196,7 @@ __device__ void SearchAtNode_knn(const CUDA_KDNode *nodes, const int *indexes, c
 			while (neighbor_nb < k)
 			{
 				cur = nodes[cur].parent;
-				neighbor_nb += nodes[cur].num_indexes;
+				neighbor_nb = nodes[cur].num_indexes;
 			}
 
 			//Now we get enough neighbors in cur node
@@ -235,6 +236,7 @@ __device__ void SearchAtNode_knn(const CUDA_KDNode *nodes, const int *indexes, c
 				best_idx = 0;
 				best_dist = FLT_MAX;
 			}
+			break;
 		}
 		else if (query.coords[split_axis] < nodes[cur].split_value){
 			cur = nodes[cur].left;
@@ -246,10 +248,75 @@ __device__ void SearchAtNode_knn(const CUDA_KDNode *nodes, const int *indexes, c
 	
 }
 
-__device__ void SearchAtiNodeRange_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, const Point &query, int cur, float range, int *ret_index, float *ret_dist, int k)
+__device__ void SearchAtiNodeRange_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, const Point &query, int cur, float range, int* &ret_index, float* &ret_dist, int k)
 {
+	// Goes through all the nodes that within "radius"
+	int to_visit[CUDA_STACK];
+	int to_visit_pos = 0;
 
+	to_visit[to_visit_pos++] = cur;
+
+	while (to_visit_pos){
+		int next_search[CUDA_STACK];
+		int next_search_pos = 0;
+
+		while (to_visit_pos){
+			cur = to_visit[to_visit_pos - 1];
+			to_visit_pos--;
+
+			int split_axis = nodes[cur].level % KDTREE_DIM;
+			
+			//already get to the leaf
+			if (nodes[cur].left == -1){
+				for (int i = 0; i < nodes[cur].num_indexes; ++i)
+				{
+					int idx = indexes[nodes[cur].indexes + i];
+					float d = Distance(query, pts[idx]);
+
+					for (int j = 0; j < k; ++j)
+					{
+						if (d < ret_dist[i])
+						{
+							for (int q = k - 1; q > j; --q)
+							{
+								ret_index[q] = ret_index[q - 1];
+								ret_dist[q] = ret_dist[q - 1];
+							}
+							ret_index[j] = idx;
+							ret_dist[j] = d;
+							break;
+						}
+					}
+				}
+			}
+			else{
+				float d = query.coords[split_axis] - nodes[cur].split_value;
+
+				// There are 3 possible scenarios
+				// The hypercircle only intersects the left region
+				// The hypercircle only intersects the right region
+				// The hypercricle intersects both
+
+				if (fabs(d) > range) {
+					if (d < 0)
+						next_search[next_search_pos++] = nodes[cur].left;
+					else
+						next_search[next_search_pos++] = nodes[cur].right;
+				}
+				else {
+					next_search[next_search_pos++] = nodes[cur].left;
+					next_search[next_search_pos++] = nodes[cur].right;
+				}
+			}
+		}
+		// No memcpy available??
+		for (int i = 0; i < next_search_pos; i++)
+			to_visit[i] = next_search[i];
+
+		to_visit_pos = next_search_pos;
+	}
 }
+
 
 __device__ void Search_knn(const CUDA_KDNode *nodes, const int *indexes, const Point *pts, const Point &query, int *ret_index, float *ret_dist, int k)
 {
@@ -261,7 +328,7 @@ __device__ void Search_knn(const CUDA_KDNode *nodes, const int *indexes, const P
 	
 	SearchAtNode_knn(nodes, indexes, pts, 0 /* root */, query, k_idx, k_dist, &best_node, k);
 
-	radius = sqrt(k_dist[k]);
+	radius = sqrt(k_dist[k - 1]);
 
 	//Now find other posiible candidates
 	int cur = best_node;
@@ -269,9 +336,25 @@ __device__ void Search_knn(const CUDA_KDNode *nodes, const int *indexes, const P
 	while (nodes[cur].parent != -1)
 	{
 		int parent = nodes[cur].parent;
-		int split_value = nodes[cur].level % KDTREE_DIM;
+		int split_axis = nodes[cur].level % KDTREE_DIM;
+
+		//Search the other node
+
+		if (fabs(nodes[parent].split_value - query.coords[split_axis]) <= radius)
+		{
+			if (nodes[parent].left != cur)
+				SearchAtiNodeRange_knn(nodes, indexes, pts, query, nodes[parent].left, radius, k_idx, k_dist, k);
+			else
+				SearchAtiNodeRange_knn(nodes, indexes, pts, query, nodes[parent].right, radius, k_idx, k_dist, k);
+		}
+		cur = parent;
 	}
 
+	for (int i = 0; i < k; ++i)
+	{
+		ret_index[i] = k_idx[i];
+		ret_dist[i] = k_dist[i];
+	}
 	free(k_idx);
 	free(k_dist);
 }
@@ -294,6 +377,7 @@ __global__ void SearchBatch_knn(const CUDA_KDNode *nodes, const int *indexes, co
 	if (idx >= num_queries)
 		return;
 
+	//test(nodes, indexes, pts, queries[idx], &ret_index[idx * k], &ret_dist[idx * k], k);
 	Search_knn(nodes, indexes, pts, queries[idx], &ret_index[idx * k], &ret_dist[idx * k], k);
 }
 
@@ -304,20 +388,20 @@ CUDA_KDTree::~CUDA_KDTree()
     cudaFree(m_gpu_points);
 }
 
-void CUDA_KDTree::CreateKDTree(KDNode *root, int num_nodes, const vector <Point> &data)
+void CUDA_KDTree::CreateKDTree(KDNode *root, int num_nodes, const vector <Point> &data, int max_levels)
 {
     // Create the nodes again on the CPU, laid out nicely for the GPU transfer
     // Not exactly memory efficient, since we're creating the entire tree again
     m_num_points = data.size();
 
     cudaMalloc((void**)&m_gpu_nodes, sizeof(CUDA_KDNode)*num_nodes);
-    cudaMalloc((void**)&m_gpu_indexes, sizeof(int)*m_num_points);
+    cudaMalloc((void**)&m_gpu_indexes, sizeof(int)*m_num_points * max_levels);
     cudaMalloc((void**)&m_gpu_points, sizeof(Point)*m_num_points);
 
     CheckCUDAError("CreateKDTree");
 
     vector <CUDA_KDNode> cpu_nodes(num_nodes);
-    vector <int> indexes(m_num_points);
+    vector <int> indexes(m_num_points * max_levels);
     vector <KDNode*> to_visit;
 
     int cur_pos = 0;
@@ -393,7 +477,7 @@ void CUDA_KDTree::Search(const vector <Point> &queries, vector <int> &indexes, v
     printf("CUDA blocks/threads: %d %d\n", blocks, threads);
 
     SearchBatch<<<blocks, threads>>>(m_gpu_nodes, m_gpu_indexes, m_gpu_points, m_num_points, gpu_queries, queries.size(), gpu_ret_indexes, gpu_ret_dist);
-    cudaThreadSynchronize();
+    //cudaThreadSynchronize();
 
     CheckCUDAError("Search");
 
@@ -428,8 +512,8 @@ void CUDA_KDTree::Search_knn(const vector<Point> &queries, vector<int> &indexes,
 
 	printf("Cuda blocks / threads : %d %d", blocks, threads);
 
-	SearchBatch_knn << < blocks, threads >> >(m_gpu_nodes, m_gpu_indexes, m_gpu_points, m_num_points, gpu_queries, queries.size(), gpu_ret_indexes, gpu_ret_dist£¬ k);
-	cudaThreadSynchronize();
+	SearchBatch_knn << < blocks, threads >> >(m_gpu_nodes, m_gpu_indexes, m_gpu_points, m_num_points, gpu_queries, queries.size(), gpu_ret_indexes, gpu_ret_dist, k);
+	//cudaThreadSynchronize();
 
 	CheckCUDAError("kernel function");
 
