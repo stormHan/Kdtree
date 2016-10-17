@@ -81,7 +81,7 @@ void KDtree::Create(vector <Point> &pts, int max_levels)
                     // Clear current indexes
                     {
                         vector <int> dummy;
-                        node->indexes.swap(dummy);
+                        //node->indexes.swap(dummy);
                     }
 
                     node->left = left;
