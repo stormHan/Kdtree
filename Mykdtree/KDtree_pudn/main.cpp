@@ -13,7 +13,7 @@
 #define timeval clock_t
 
 double TimeDiff(timeval t1, timeval t2);
-double SearchCPU(const vector <Point> &query, const vector <Point> &data, vector <int> &idxs, vector <float> dist_sq);
+double SearchCPU(const vector <Point> &query, const vector <Point> &data, vector <int> &idxs, vector <float> &dist_sq);
 void SearchANN(const vector <Point> &query, const vector <Point> &data, vector <int> &idxs, vector <float> dist_sq, double &create_time, double &search_time);
 
 int main()
@@ -23,13 +23,16 @@ int main()
 	timeval t1, t2;
 	int max_tree_levels = 13; // play around with this value to get the best result
 
-	vector <Point> data(100000);
-	vector <Point> queries(100000);
+	vector <Point> data(20);
+	vector <Point> queries(20);
 
 	vector <int> gpu_indexes, cpu_indexes;
 	vector <float> gpu_dists, cpu_dists;
 
-	for (unsigned int i = 0; i < data.size(); i++) {
+	freopen("out", "r", stdin);
+	//freopen("out", "w", stdout);
+
+	/*for (unsigned int i = 0; i < data.size(); i++) {
 		data[i].coords[0] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		data[i].coords[1] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		data[i].coords[2] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
@@ -39,14 +42,26 @@ int main()
 		queries[i].coords[0] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		queries[i].coords[1] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		queries[i].coords[2] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
+	}*/
+
+	//print to out file
+	for (unsigned int i = 0; i < data.size(); ++i)
+	{
+		scanf("%f, %f, %f\n", &data[i].coords[0], &data[i].coords[1], &data[i].coords[2]);
 	}
 
+	for (unsigned int i = 0; i < queries.size(); ++i)
+	{
+		scanf("%f, %f, %f\n", &queries[i].coords[0], &queries[i].coords[1], &queries[i].coords[2]);
+	}
+
+	
 	// Time to create the tree
 	//gettimeofday(&t1, NULL);
 	t1 = clock();
 	tree.Create(data, max_tree_levels);
 	
-	GPU_tree.CreateKDTree(tree.GetRoot(), tree.GetNumNodes(), data);
+	GPU_tree.CreateKDTree(tree.GetRoot(), tree.GetNumNodes(), data, tree.GetLevel());
 	//gettimeofday(&t2, NULL);
 	t2 = clock();
 	double gpu_create_time = TimeDiff(t1, t2);
@@ -54,7 +69,7 @@ int main()
 	// Time to search the tree
 	//gettimeofday(&t1, NULL);
 	t1 = clock();
-	GPU_tree.Search(queries, gpu_indexes, gpu_dists);
+	GPU_tree.Search_knn(queries, gpu_indexes, gpu_dists,5);
 	//gettimeofday(&t2, NULL);
 	t2 = clock();
 	double gpu_search_time = TimeDiff(t1, t2);
@@ -85,16 +100,16 @@ int main()
 	printf("Results are the same!\n");
 
 	printf("\n");
-
+	/*
 	printf("GPU max tree depth: %d\n", max_tree_levels);
 	printf("GPU create + search: %g + %g = %g ms\n", gpu_create_time, gpu_search_time, gpu_create_time + gpu_search_time);
 	printf("ANN create + search: %g + %g = %g ms\n", ANN_create_time, ANN_search_time, ANN_create_time + ANN_search_time);
 	printf("CPU search time : %g ms\n", cpu_search_time);
 
 
-	printf("Speed up of GPU over CPU for searches: %.2fx\n", ANN_search_time / gpu_search_time);
+	printf("Speed up of GPU over CPU for searches: %.2fx\n", ANN_search_time / gpu_search_time);*/
 
-	/*
+		/*
 	Point query;
 	int ret_index;
 	float ret_dist;
@@ -143,7 +158,7 @@ int main()
 	}
 
 	*/
-	system("pause");
+	
 	return 0;
 }
 
@@ -159,7 +174,7 @@ double TimeDiff(timeval t1, timeval t2)
 /*
 	this CPU version doesn't use kdtree
 */
-double SearchCPU(const vector <Point> &queries, const vector <Point> &data, vector <int> &idxs, vector <float> dist_sq)
+double SearchCPU(const vector <Point> &queries, const vector <Point> &data, vector <int> &idxs, vector <float> &dist_sq)
 {
 	timeval t1, t2;
 
