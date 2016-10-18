@@ -19,7 +19,7 @@ class CUDA_KDTree
 {
 public:
     ~CUDA_KDTree();
-    void CreateKDTree(KDNode *root, int num_nodes, const vector <Point> &data);
+    void CreateKDTree(KDNode *root, int num_nodes, const vector <Point> &data, int max_levels);
     void Search(const vector <Point> &queries, vector <int> &indexes, vector <float> &dists);
 
 	/*
