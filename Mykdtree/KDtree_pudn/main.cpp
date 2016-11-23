@@ -1,5 +1,7 @@
 #include <cstdio>
 #include <vector>
+#include <map>
+#include <algorithm>
 #include <cstdlib>
 #include <float.h>
 #include <time.h>
@@ -23,16 +25,16 @@ int main()
 	timeval t1, t2;
 	int max_tree_levels = 13; // play around with this value to get the best result
 
-	vector <Point> data(20);
-	vector <Point> queries(20);
+	vector <Point> data(1000);
+	vector <Point> queries(1000);
 
 	vector <int> gpu_indexes, cpu_indexes;
 	vector <float> gpu_dists, cpu_dists;
 
-	freopen("out", "r", stdin);
+	//freopen("out", "r", stdin);
 	//freopen("out", "w", stdout);
-
-	/*for (unsigned int i = 0; i < data.size(); i++) {
+	
+	for (unsigned int i = 0; i < data.size(); i++) {
 		data[i].coords[0] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		data[i].coords[1] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		data[i].coords[2] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
@@ -42,10 +44,10 @@ int main()
 		queries[i].coords[0] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		queries[i].coords[1] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
 		queries[i].coords[2] = 0 + 100.0*(rand() / (1.0 + RAND_MAX));
-	}*/
+	}
 
 	//print to out file
-	for (unsigned int i = 0; i < data.size(); ++i)
+	/*for (unsigned int i = 0; i < data.size(); ++i)
 	{
 		scanf("%f, %f, %f\n", &data[i].coords[0], &data[i].coords[1], &data[i].coords[2]);
 	}
@@ -53,7 +55,7 @@ int main()
 	for (unsigned int i = 0; i < queries.size(); ++i)
 	{
 		scanf("%f, %f, %f\n", &queries[i].coords[0], &queries[i].coords[1], &queries[i].coords[2]);
-	}
+	}*/
 
 	
 	// Time to create the tree
@@ -69,11 +71,12 @@ int main()
 	// Time to search the tree
 	//gettimeofday(&t1, NULL);
 	t1 = clock();
+	//GPU_tree.Search(queries, gpu_indexes, gpu_dists);
 	GPU_tree.Search_knn(queries, gpu_indexes, gpu_dists,5);
 	//gettimeofday(&t2, NULL);
 	t2 = clock();
 	double gpu_search_time = TimeDiff(t1, t2);
-
+	
 	t1 = clock();
 	SearchCPU(queries, data, cpu_indexes, cpu_dists);
 	t2 = clock();
@@ -86,10 +89,10 @@ int main()
 	// Verify results
 	for (unsigned int i = 0; i< gpu_indexes.size(); i++) {
 		if (gpu_indexes[i] != cpu_indexes[i]) {
-			printf("Resuts not the same :(\n");
+			printf("Resuts not the same :(\n"); 
 			printf("%d != %d\n", gpu_indexes[i], cpu_indexes[i]);
 			printf("%f %f\n", gpu_dists[i], cpu_dists[i]);
-			return 1;
+			//return 1;
 		}
 	}
 
@@ -171,6 +174,42 @@ double TimeDiff(timeval t1, timeval t2)
 	// return t;
 }
 
+
+vector<int> findNearestPoints(const Point &query, const vector <Point> &data, int _n)
+{
+	std::map<double, int> dis_index_map;
+	std::vector<int> nearest_N_index;
+	std::vector<double> temp_dis;
+
+	
+
+	float t = 0.0;
+	for (int i = 0; i < data.size(); ++i)
+	{
+		for (int k = 0; k < KDTREE_DIM; k++) {
+			float d = query.coords[k] - data[i].coords[k];
+			t += d*d;
+		}
+
+		while (dis_index_map.count(t) != 0)
+			t += 0.0000001;
+		dis_index_map.insert(std::pair<double, int>(t, i));
+
+		temp_dis.push_back(t);
+		t = 0.0;
+	}
+
+	std::sort(temp_dis.begin(), temp_dis.end());
+
+	for (int i = 0; nearest_N_index.size() < _n; ++i)
+	{
+		int tmp = dis_index_map[temp_dis[i]];
+		
+		nearest_N_index.push_back(tmp);
+	}
+	return nearest_N_index;
+}
+
 /*
 	this CPU version doesn't use kdtree
 */
@@ -181,8 +220,8 @@ double SearchCPU(const vector <Point> &queries, const vector <Point> &data, vect
 	int query_pts = queries.size();
 	int data_pts = data.size();
 
-	idxs.resize(query_pts);
-	dist_sq.resize(query_pts);
+	idxs.resize(query_pts * 5);
+	dist_sq.resize(query_pts * 5);
 
 	//gettimeofday(&t1, NULL);
 	t1 = clock();
@@ -190,22 +229,27 @@ double SearchCPU(const vector <Point> &queries, const vector <Point> &data, vect
 		float best_dist = FLT_MAX;
 		int best_idx = 0;
 
-		for (unsigned int j = 0; j < data_pts; j++) {
-			float dist_sq = 0;
-
+		vector<int> near = findNearestPoints(queries[i], data, 5);
+		for (int j = 0; j < 5; ++j)
+		{
+			idxs[i * 5 + j] = near[j];
+		}
+		/*for (unsigned int j = 0; j < data_pts; j++) {
+			float dist_sq1 = 0;
+			
 			for (int k = 0; k < KDTREE_DIM; k++) {
 				float d = queries[i].coords[k] - data[j].coords[k];
-				dist_sq += d*d;
+				dist_sq1 += d*d;
 			}
-
-			if (dist_sq < best_dist) {
-				best_dist = dist_sq;
+			
+			if (dist_sq1 < best_dist) {
+				best_dist = dist_sq1;
 				best_idx = j;
 			}
-		}
+		}*/
 
-		idxs[i] = best_idx;
-		dist_sq[i] = best_dist;
+		//idxs[i] = best_idx;
+		//dist_sq[i] = best_dist;
 	}
 
 	//gettimeofday(&t2, NULL);

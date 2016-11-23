@@ -4,7 +4,7 @@
 #include <float.h>
 #include <cstdio>
 
-#define CUDA_STACK 100 // fixed size stack elements for each thread, increase as required. Used in SearchAtNodeRange.
+#define CUDA_STACK 1000 // fixed size stack elements for each thread, increase as required. Used in SearchAtNodeRange.
 
 void CheckCUDAError(const char *msg)
 {
@@ -140,7 +140,7 @@ __device__ void Search(const CUDA_KDNode *nodes, const int *indexes, const Point
     int best_idx = 0;
     float best_dist = FLT_MAX;
     float radius = 0;
-
+											
     SearchAtNode(nodes, indexes, pts, 0 /* root */, query, &best_idx, &best_dist, &best_node);
 
     radius = sqrt(best_dist);
@@ -190,14 +190,14 @@ __device__ void SearchAtNode_knn(const CUDA_KDNode *nodes, const int *indexes, c
 
 		if (nodes[cur].left == -1){
 			//Get to the leaf node
-			*ret_node = cur;
-
+			
 			neighbor_nb += nodes[cur].num_indexes;
 			while (neighbor_nb < k)
 			{
 				cur = nodes[cur].parent;
 				neighbor_nb = nodes[cur].num_indexes;
 			}
+			*ret_node = cur;
 
 			//Now we get enough neighbors in cur node
 			int *temp_index = (int*)malloc(sizeof(int) * nodes[cur].num_indexes);
@@ -253,7 +253,7 @@ __device__ void SearchAtiNodeRange_knn(const CUDA_KDNode *nodes, const int *inde
 	// Goes through all the nodes that within "radius"
 	int to_visit[CUDA_STACK];
 	int to_visit_pos = 0;
-
+	
 	to_visit[to_visit_pos++] = cur;
 
 	while (to_visit_pos){
@@ -272,10 +272,11 @@ __device__ void SearchAtiNodeRange_knn(const CUDA_KDNode *nodes, const int *inde
 				{
 					int idx = indexes[nodes[cur].indexes + i];
 					float d = Distance(query, pts[idx]);
-
+					
 					for (int j = 0; j < k; ++j)
 					{
-						if (d < ret_dist[i])
+						
+						if (d < ret_dist[j])
 						{
 							for (int q = k - 1; q > j; --q)
 							{
@@ -298,7 +299,7 @@ __device__ void SearchAtiNodeRange_knn(const CUDA_KDNode *nodes, const int *inde
 				// The hypercricle intersects both
 
 				if (fabs(d) > range) {
-					if (d < 0)
+					if (d < 0) 
 						next_search[next_search_pos++] = nodes[cur].left;
 					else
 						next_search[next_search_pos++] = nodes[cur].right;
@@ -332,22 +333,29 @@ __device__ void Search_knn(const CUDA_KDNode *nodes, const int *indexes, const P
 
 	//Now find other posiible candidates
 	int cur = best_node;
-
+	int count = 0;
 	while (nodes[cur].parent != -1)
 	{
 		int parent = nodes[cur].parent;
-		int split_axis = nodes[cur].level % KDTREE_DIM;
-
+		int split_axis = nodes[parent].level % KDTREE_DIM;
+		
 		//Search the other node
-
+		if (parent == 0)
+		{
+			ret_dist[1] = nodes[parent].split_value;
+			ret_dist[2] = query.coords[split_axis];
+		}
 		if (fabs(nodes[parent].split_value - query.coords[split_axis]) <= radius)
 		{
+			
 			if (nodes[parent].left != cur)
 				SearchAtiNodeRange_knn(nodes, indexes, pts, query, nodes[parent].left, radius, k_idx, k_dist, k);
 			else
 				SearchAtiNodeRange_knn(nodes, indexes, pts, query, nodes[parent].right, radius, k_idx, k_dist, k);
+				
 		}
 		cur = parent;
+		count++;
 	}
 
 	for (int i = 0; i < k; ++i)
@@ -355,6 +363,7 @@ __device__ void Search_knn(const CUDA_KDNode *nodes, const int *indexes, const P
 		ret_index[i] = k_idx[i];
 		ret_dist[i] = k_dist[i];
 	}
+	
 	free(k_idx);
 	free(k_dist);
 }
@@ -395,13 +404,13 @@ void CUDA_KDTree::CreateKDTree(KDNode *root, int num_nodes, const vector <Point>
     m_num_points = data.size();
 
     cudaMalloc((void**)&m_gpu_nodes, sizeof(CUDA_KDNode)*num_nodes);
-    cudaMalloc((void**)&m_gpu_indexes, sizeof(int)*m_num_points * max_levels);
+    cudaMalloc((void**)&m_gpu_indexes, sizeof(int)*m_num_points * (max_levels + 1));
     cudaMalloc((void**)&m_gpu_points, sizeof(Point)*m_num_points);
 
     CheckCUDAError("CreateKDTree");
 
     vector <CUDA_KDNode> cpu_nodes(num_nodes);
-    vector <int> indexes(m_num_points * max_levels);
+    vector <int> indexes(m_num_points * (max_levels + 1));
     vector <KDNode*> to_visit;
 
     int cur_pos = 0;
@@ -425,9 +434,10 @@ void CUDA_KDTree::CreateKDTree(KDNode *root, int num_nodes, const vector <Point>
             cpu_nodes[id].num_indexes = cur->indexes.size();
 
             if(cur->indexes.size()) {
-                for(unsigned int i=0; i < cur->indexes.size(); i++)
-                    indexes[cur_pos+i] = cur->indexes[i];
-
+				for (unsigned int i = 0; i < cur->indexes.size(); i++){
+					if (cur_pos + i >= indexes.size()) printf("%d \n", cur_pos + i);
+					else indexes[cur_pos + i] = cur->indexes[i];
+				}
                 cpu_nodes[id].indexes = cur_pos;
                 cur_pos += cur->indexes.size();
             }
@@ -524,6 +534,6 @@ void CUDA_KDTree::Search_knn(const vector<Point> &queries, vector<int> &indexes,
 
 	cudaFree(gpu_queries);
 	cudaFree(gpu_ret_dist);
-	cudaFree(m_gpu_indexes);
+	cudaFree(gpu_ret_indexes);
 
 }
